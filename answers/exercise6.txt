@@ -1,0 +1,39 @@
+Exercise 6 - Docker compose (todo-backend)
+==========================================
+
+declares the containerized todo-backend as a compose service
+(todo-app/todo-backend/docker-compose.yml):
+
+services:
+  app:
+    image: todo-backend
+    build: .
+    ports:
+      - 3000:3000
+
+build and run with a single command (same port on host and container):
+
+$ docker compose up --build
+...
+#10 unpacking to docker.io/library/todo-backend:latest DONE
+ Image todo-backend Built
+ Network todo-backend_default Created
+ Container todo-backend-app-1 Started
+
+visit counter works through the compose-managed container:
+
+$ curl -s http://localhost:3000/
+{"visits":1}
+
+$ curl -s http://localhost:3000/
+{"visits":2}
+
+$ docker compose ps
+NAME                 IMAGE          COMMAND                 SERVICE   PORTS
+todo-backend-app-1   todo-backend   "docker-entrypoint.s…"  app       0.0.0.0:3000->3000/tcp
+
+teardown:
+
+$ docker compose down
+ Container todo-backend-app-1 Stopped / Removed
+ Network todo-backend_default Removed
