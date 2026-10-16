@@ -1,0 +1,47 @@
+Exercise 10 - Get Set Ready! (Redis todo counter, todo-backend)
+===============================================================
+
+uses the promisified set/get exported by redis/index.js.
+
+Step 1: increment counter on todo creation (routes/todos.js):
+
+  const redis = require('../redis')
+  ...
+  router.post('/', async (req, res) => {
+    const todo = await Todo.create({ text: req.body.text, done: false })
+
+    const addedTodos = Number((await redis.get('added_todos')) ?? 0) + 1
+    await redis.set('added_todos', addedTodos)
+
+    res.send(todo);
+  });
+
+Step 2: GET /statistics endpoint (routes/index.js):
+
+  router.get('/statistics', async (req, res) => {
+    res.send({
+      added_todos: Number(await redis.get('added_todos')) || 0
+    });
+  });
+
+run (mongo + redis from docker-compose.dev.yml, app via npm start):
+
+$ curl -s http://localhost:3000/statistics
+{"added_todos":0}
+
+$ curl -s -X POST http://localhost:3000/todos -H "Content-Type: application/json" -d '{"text":"Count me one"}'
+{"text":"Count me one","done":false,"_id":"6ad22efaebbe5379bc69e0f1","__v":0}
+
+$ curl -s -X POST http://localhost:3000/todos -H "Content-Type: application/json" -d '{"text":"Count me two"}'
+{"text":"Count me two","done":false,"_id":"6ad22efaebbe5379bc69e0f3","__v":0}
+
+$ curl -s http://localhost:3000/statistics
+{"added_todos":2}
+
+the counter value really lives in Redis:
+
+$ docker exec todo-backend-redis-1 redis-cli GET added_todos
+"2"
+
+teardown:
+$ docker compose -f docker-compose.dev.yml down --volumes
