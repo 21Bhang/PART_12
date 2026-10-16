@@ -1,0 +1,54 @@
+Exercise 7 - Little bit of MongoDB coding (todo-backend)
+========================================================
+
+backend kept running on the host (npm start), MongoDB containerized
+via docker-compose.dev.yml with the mongo-init.js bind mount and a
+named volume for data persistence:
+
+    volumes:
+      - ./mongo/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js
+      - mongo_data:/data/db
+
+volumes:
+  mongo_data
+
+fresh initialization:
+$ docker compose -f docker-compose.dev.yml down --volumes
+$ docker compose -f docker-compose.dev.yml up -d
+ Volume todo-backend_mongo_data Created
+$ docker volume ls
+local     todo-backend_mongo_data
+
+$ npm start                      (node --env-file-if-exists=.env)
+$ curl -s http://localhost:3000/todos
+[{"_id":"6ad22b2fac282ba54f001ce3","text":"Write code","done":true},{"_id":"6ad22b2fac282ba54f001ce4","text":"Learn about containers","done":false}]
+
+implemented GET /todos/:id and PUT /todos/:id in routes/todos.js
+(used to be res.sendStatus(405) placeholders):
+
+  GET -> res.send(req.todo) (todo already loaded by findByIdMiddleware)
+  PUT -> Todo.findByIdAndUpdate(req.todo._id,
+         { text: req.body.text, done: req.body.done },
+         { new: true, runValidators: true })
+
+tests:
+$ curl -s http://localhost:3000/todos/6ad22b2fac282ba54f001ce4
+{"_id":"6ad22b2fac282ba54f001ce4","text":"Learn about containers","done":false}
+
+$ curl -s -X PUT http://localhost:3000/todos/6ad22b2fac282ba54f001ce4 -H "Content-Type: application/json" -d '{"text":"Updated todo text","done":true}'
+{"_id":"6ad22b2fac282ba54f001ce4","text":"Updated todo text","done":true}
+
+$ curl -s http://localhost:3000/todos/6ad22b2fac282ba54f001ce4
+{"_id":"6ad22b2fac282ba54f001ce4","text":"Updated todo text","done":true}
+
+$ curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/todos/000000000000000000000000
+404
+
+persistence check, restart without --volumes:
+$ docker compose -f docker-compose.dev.yml down
+$ docker compose -f docker-compose.dev.yml up -d
+$ curl -s http://localhost:3000/todos
+[{"_id":"6ad22b2fac282ba54f001ce3","text":"Write code","done":true},{"_id":"6ad22b2fac282ba54f001ce4","text":"Updated todo text","done":true}]
+
+teardown:
+$ docker compose -f docker-compose.dev.yml down --volumes
