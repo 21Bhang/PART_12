@@ -1,0 +1,58 @@
+Exercise 11 - Redis CLI (todo-backend)
+======================================
+
+Running state: mongo + redis from docker-compose.dev.yml, backend on host
+(npm start). Bootstrapped one todo through the API so the counter exists:
+
+$ curl -s -X POST http://localhost:3000/todos -H "Content-Type: application/json" -d '{"text":"Bootstrap todo"}'
+{"text":"Bootstrap todo","done":false,"_id":"6ad22f6e939ab61b21ea1d73","__v":0}
+
+Inside the Redis container with docker exec, redis-cli open.
+Step 1: find the key, step 2: check its value, step 3: set it to 9001:
+
+$ docker exec -it todo-backend-redis-1 redis-cli
+127.0.0.1:6379> KEYS *
+1) "added_todos"
+127.0.0.1:6379> GET added_todos
+"1"
+127.0.0.1:6379> SET added_todos 9001
+OK
+127.0.0.1:6379> GET added_todos
+"9001"
+
+Step 4: make sure the new value works via the app:
+
+$ curl -s http://localhost:3000/statistics
+{"added_todos":9001}
+
+Step 5: create a new todo (Postman equivalent: curl), ensure the counter
+increased accordingly from redis-cli:
+
+$ curl -s -X POST http://localhost:3000/todos -H "Content-Type: application/json" -d '{"text":"Postman-style todo"}'
+{"text":"Postman-style todo","done":false,"_id":"6ad22f85939ab61b21ea1d75","__v":0}
+
+127.0.0.1:6379> GET added_todos
+"9002"
+
+Step 6: delete the key from the CLI, counter starts over and keeps working
+when new todos are added:
+
+127.0.0.1:6379> DEL added_todos
+(integer) 1
+127.0.0.1:6379> GET added_todos
+(nil)
+
+$ curl -s http://localhost:3000/statistics
+{"added_todos":0}
+
+$ curl -s -X POST http://localhost:3000/todos -H "Content-Type: application/json" -d '{"text":"Start over"}'
+{"text":"Start over","done":false,"_id":"6ad22f93939ab61b21ea1d77","__v":0}
+
+$ curl -s http://localhost:3000/statistics
+{"added_todos":1}
+
+$ docker exec todo-backend-redis-1 redis-cli GET added_todos
+"1"
+
+teardown:
+$ docker compose -f docker-compose.dev.yml down --volumes
