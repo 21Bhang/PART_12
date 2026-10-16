@@ -1,0 +1,53 @@
+Exercise 12 - Persisting data in Redis (todo-backend)
+=====================================================
+
+default behaviour (no persistence configured), counter bootstrapped to 1:
+
+$ curl -s http://localhost:3000/statistics
+{"added_todos":1}
+
+$ docker compose -f docker-compose.dev.yml down
+$ docker compose -f docker-compose.dev.yml up -d
++ restart backend
+
+$ curl -s http://localhost:3000/statistics
+{"added_todos":0}
+
+-> counter was reset to 0, data is NOT persisted by default.
+
+modified todo-app/todo-backend/docker-compose.dev.yml (per Docker Hub page):
+
+    redis:
+      image: redis
+      ports:
+        - 6379:6379
+      command: ['redis-server', '--appendonly', 'yes']
+      volumes:
+        - ./redis_data:/data
+
+also added redis_data/ (and mongo_data/) to todo-backend/.gitignore.
+
+with persistence enabled, create a todo:
+
+$ curl -s -X POST http://localhost:3000/todos -H "Content-Type: application/json" -d '{"text":"Survive the restart"}'
+$ curl -s http://localhost:3000/statistics
+{"added_todos":1}
+
+AOF is written to the host bind mount:
+$ ls ./redis_data
+appendonlydir
+
+the survival test:
+
+$ docker compose -f docker-compose.dev.yml down
+$ docker compose -f docker-compose.dev.yml up -d
++ restart backend
+
+$ curl -s http://localhost:3000/statistics
+{"added_todos":1}
+
+-> counter survived, data persisted in ./redis_data on the host.
+
+teardown:
+$ docker compose -f docker-compose.dev.yml down --volumes
+(rm -rf redis_data for a clean slate)

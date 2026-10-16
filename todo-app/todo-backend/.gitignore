@@ -57,5 +57,9 @@ typings/
 # dotenv environment variables file
 .env
 
+# Bind mount targets (created by docker-compose.dev.yml)
+mongo_data/
+redis_data/
+
 # next.js build output
 .next
