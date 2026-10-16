@@ -1,0 +1,82 @@
+Exercise 8 - Mongo CLI (todo-backend)
+=====================================
+
+Step 1: Run MongoDB (from previous exercise, app still on the host)
+
+$ docker compose -f docker-compose.dev.yml up -d
+ Network todo-backend_default Created
+ Volume todo-backend_mongo_data Created
+ Container todo-backend-mongo-1 Started
+ Container todo-backend-redis-1 Started
+
+$ docker compose -f docker-compose.dev.yml ps
+NAME                   IMAGE     COMMAND                 SERVICE  PORTS
+todo-backend-mongo-1   mongo     "docker-entrypoint.s…"  mongo    0.0.0.0:3456->27017/tcp
+todo-backend-redis-1   redis     "docker-entrypoint.s…"  redis    0.0.0.0:6379->6379/tcp
+
+Step 2+3: docker exec to get inside and open Mongo CLI (mongosh -u root -p example)
+
+> show dbs
+admin         100.00 KiB
+config         12.00 KiB
+local          40.00 KiB
+the_database   40.00 KiB
+
+> use the_database
+switched to db the_database
+
+> show collections
+todos
+
+> db.todos.find({})
+[
+  {
+    _id: ObjectId('6ad22c44c04898d68ad31406'),
+    text: 'Write code',
+    done: true
+  },
+  {
+    _id: ObjectId('6ad22c44c04898d68ad31407'),
+    text: 'Learn about containers',
+    done: false
+  }
+]
+
+add a new todo through the CLI:
+
+> db.todos.insertOne({ text: 'Increase the number of tools in my tool belt', done: false })
+{
+  acknowledged: true,
+  insertedId: ObjectId('6ad22c737cc86341f89e3975')
+}
+
+> db.todos.find({})
+[
+  {
+    _id: ObjectId('6ad22c44c04898d68ad31406'),
+    text: 'Write code',
+    done: true
+  },
+  {
+    _id: ObjectId('6ad22c44c04898d68ad31407'),
+    text: 'Learn about containers',
+    done: false
+  },
+  {
+    _id: ObjectId('6ad22c737cc86341f89e3975'),
+    text: 'Increase the number of tools in my tool belt',
+    done: false
+  }
+]
+
+seen in the Express app as well (npm start, .env loaded):
+
+$ curl -s http://localhost:3000/todos
+[{"_id":"6ad22c44c04898d68ad31406","text":"Write code","done":true},
+ {"_id":"6ad22c44c04898d68ad31407","text":"Learn about containers","done":false},
+ {"_id":"6ad22c737cc86341f89e3975","text":"Increase the number of tools in my tool belt","done":false}]
+
+same ObjectId 6ad22c737cc86341f89e3975 in both -> done
+
+teardown:
+$ docker compose -f docker-compose.dev.yml down --volumes
