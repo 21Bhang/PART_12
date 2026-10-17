@@ -1,0 +1,69 @@
+Exercise 19 - Connect todo-frontend with todo-backend through Nginx
+===================================================================
+
+1. frontend now calls the backend through the proxy
+
+todo-app/docker-compose.dev.yml:
+
+  frontend:
+    ...
+    environment:
+      - VITE_BACKEND_URL=http://localhost:8080/api
+      - CHOKIDAR_USEPOLLING=true
+
+The browser downloads the React app from nginx (localhost:8080) and its API
+requests now also go to nginx (/api/...), which proxies them to the backend.
+The frontend container is only accessed directly on the initial request for
+the source code; the backend never leaves the Docker network.
+
+2. only nginx publishes a port
+
+removed from frontend:
+      - 5173:5173
+removed from backend:
+      - 3000:3000
+
+mongo/redis never published ports. nginx keeps 8080:80. Frontend, backend and
+nginx are in the same compose network, so nginx reaches them on their
+internal ports (frontend:5173, backend:3000) without any published ports.
+
+3. one hiccup: nginx caches resolved addresses at startup
+
+after recreating frontend and backend (new container IPs), the app got 502
+Bad Gateway through nginx. depends_on only guarantees the startup order, it
+does not make nginx re-resolve the service names. Restarting nginx fixed it:
+
+$ docker compose -f docker-compose.dev.yml restart nginx
+
+4. verifying
+
+app root and env var served through the proxy:
+
+$ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/
+200
+$ curl -s http://localhost:8080/src/util/apiClient.js | head -1
+import.meta.env = {..., "VITE_BACKEND_URL": "http://localhost:8080/api"};
+
+all features through the proxy:
+
+$ curl -s http://localhost:8080/api/todos
+[{"_id":"...","text":"Write code","done":true},{"_id":"...","text":"Learn about containers","done":false}]
+$ curl -s -X POST http://localhost:8080/api/todos -H "Content-Type: application/json" -d '{"text":"Exercise 19 check"}'
+{"text":"Exercise 19 check","done":false,"_id":"..."}
+$ curl -s -X PUT http://localhost:8080/api/todos/<id> ...   -> done: true
+$ curl -s -X DELETE http://localhost:8080/api/todos/<id>    -> 200
+$ curl -s http://localhost:8080/api/statistics
+{"added_todos":4}
+
+editing source files still hot reloads through the proxy:
+
+todo-frontend-dev | [vite] (client) hmr update /src/Todos/TodoView.jsx
+
+direct access is gone:
+
+$ curl -s --max-time 5 -o /dev/null -w "%{http_code}\n" http://localhost:3000/todos
+000 (connection refused)
+$ curl -s --max-time 5 -o /dev/null -w "%{http_code}\n" http://localhost:5173/
+000 (connection refused)
+
+the todo app is now fully usable at http://localhost:8080.

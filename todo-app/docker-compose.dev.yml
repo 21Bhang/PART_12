@@ -4,11 +4,9 @@ services:
     volumes:
       - ./todo-frontend:/usr/src/app
       - /usr/src/app/node_modules
-    ports:
-      - 5173:5173
     container_name: todo-frontend-dev
     environment:
-      - VITE_BACKEND_URL=http://localhost:3000
+      - VITE_BACKEND_URL=http://localhost:8080/api
       - CHOKIDAR_USEPOLLING=true
 
   backend:
@@ -16,8 +14,6 @@ services:
     volumes:
       - ./todo-backend:/usr/src/app
       - /usr/src/app/node_modules
-    ports:
-      - 3000:3000
     container_name: todo-backend-dev
     environment:
       - MONGO_URL=mongodb://the_username:the_password@mongo:27017/the_database
