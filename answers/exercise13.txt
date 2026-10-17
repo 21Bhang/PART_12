@@ -1,0 +1,88 @@
+Exercise 13 - Todo application frontend (todo-frontend)
+========================================================
+
+README says the backend URL is read from env VITE_BACKEND_URL, and that
+static files are produced with `npm run build`.
+
+1. frontend outside the container
+
+start the backend (still outside a container) and its services:
+
+$ docker compose -f docker-compose.dev.yml up -d   # mongo + redis
+$ npm start                                        # todo-backend
+
+$ cd ../todo-frontend
+$ npm install
+
+VITE_BACKEND_URL is baked in when the code is processed, so it must be set
+before starting/building:
+
+$ VITE_BACKEND_URL=http://localhost:3000 npm run dev
+
+  VITE ready in 1847 ms
+  ➜  Local: http://localhost:5173/
+
+Vite's transformed module shows the env var got defined:
+
+$ curl -s http://localhost:5173/src/util/apiClient.js
+import.meta.env = {..., "VITE_BACKEND_URL": "http://localhost:3000"};
+const apiClient = axios.create({ baseURL: import.meta.env.VITE_BACKEND_URL });
+
+browser at http://localhost:5173 lists the todos, can add, complete and
+delete them.
+
+2. todo-app/todo-frontend/Dockerfile
+
+multi-stage: vite build in a node stage, static dist served by nginx.
+
+FROM node:24 AS build-stage
+
+WORKDIR /usr/src/app
+
+COPY . .
+
+RUN npm ci
+
+ENV VITE_BACKEND_URL=http://localhost:3000
+
+RUN npm run build
+
+FROM nginx:1.29-alpine
+
+COPY --from=build-stage /usr/src/app/dist /usr/share/nginx/html
+
+ENV comes before RUN npm run build: Vite embeds the value into the static
+files at build time, so setting it later (e.g. docker run -e) would have no
+effect. Also added .dockerignore (node_modules, dist, Dockerfile).
+
+3. build and run (backend still outside a container)
+
+$ docker build . -t todo-frontend
+ => naming to docker.io/library/todo-frontend:latest
+
+$ docker run -d -p 8080:80 --name todo-frontend todo-frontend
+$ curl -s http://localhost:8080/
+<!doctype html>
+  <script type="module" crossorigin src="/assets/index-BHOp54IR.js"></script>
+
+the URL is embedded in the built bundle inside the image:
+
+$ docker exec todo-frontend sh -c "grep -o 'http://localhost:3000' /usr/share/nginx/html/assets/*.js | head -2"
+http://localhost:3000
+
+backend answers with CORS headers for the frontend origin:
+
+$ curl -s -H "Origin: http://localhost:8080" -D - http://localhost:3000/todos -o /dev/null
+HTTP/1.1 200 OK
+Access-Control-Allow-Origin: *
+
+browser at http://localhost:8080 shows the todos from the backend running on
+the host: adding, completing and deleting todos all work.
+
+side fix found while testing: the DELETE /todos/:id route (upstream template)
+called req.todo.delete(), which no longer exists in Mongoose 9 and crashed
+with 500. Changed to req.todo.deleteOne().
+
+teardown:
+$ docker rm -f todo-frontend
+$ docker compose -f docker-compose.dev.yml down
