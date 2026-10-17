@@ -1,0 +1,131 @@
+Exercise 20 - Containerized production environment
+===================================================
+
+todo-app
+├── todo-frontend
+|   └── Dockerfile
+├── todo-backend
+|   └── Dockerfile
+├── nginx.dev.conf
+├── docker-compose.dev.yml
+├── nginx.conf
+└── docker-compose.yml
+
+1. todo-app/docker-compose.yml
+
+services:
+  app:
+    image: todo-front
+    build:
+      context: ./todo-frontend
+      dockerfile: Dockerfile
+
+  backend:
+    image: todo-backend
+    build:
+      context: ./todo-backend
+      dockerfile: Dockerfile
+    environment:
+      - MONGO_URL=mongodb://the_username:the_password@mongo:27017/the_database
+      - REDIS_URL=redis://redis:6379
+
+  mongo:
+    image: mongo
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: example
+      MONGO_INITDB_DATABASE: the_database
+    volumes:
+      - ./todo-backend/mongo/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js
+      - mongo_data:/data/db
+
+  redis:
+    image: redis
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redis_data:/data
+
+  nginx:
+    image: nginx:1.29
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - 8080:80
+    depends_on:
+      - app
+      - backend
+
+volumes:
+  mongo_data:
+  redis_data:
+
+The images are named todo-front and todo-backend as required. Production
+Dockerfiles are used, no volumes for source code, no dev servers. Only nginx
+publishes a port (8080), everything else stays inside the compose network.
+
+2. todo-app/nginx.conf
+
+events { }
+
+http {
+  server {
+    listen 80;
+
+    location /api/ {
+      proxy_pass http://backend:3000/;
+    }
+
+    location / {
+      proxy_pass http://app:80;
+    }
+  }
+}
+
+The app service is the production frontend (nginx:alpine serving the built
+dist) so it listens on port 80 inside its container.
+
+3. todo-frontend/Dockerfile
+
+ENV VITE_BACKEND_URL changed from http://localhost:3000 (exercise 13, backend
+outside the container) to http://localhost:8080/api, since the production app
+is used through the reverse proxy at port 8080.
+
+4. building and verifying
+
+$ docker compose -f docker-compose.yml up -d --build
+[app test-stage 5/5] RUN npm run test
+     Tests  5 passed (5)
+[app build-stage 4/4] RUN npm run build
+naming to docker.io/library/todo-front:latest
+naming to docker.io/library/todo-backend:latest
+
+production frontend, no dev server:
+
+$ curl -s http://localhost:8080/ | grep script
+  <script type="module" crossorigin src="/assets/index-DA0vZ3V0.js"></script>
+$ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/@vite/client
+404
+
+backend URL baked into the built bundle:
+
+$ docker exec todo-app-app-1 sh -c "grep -o 'http://localhost:8080/api' /usr/share/nginx/html/assets/*.js"
+http://localhost:8080/api
+
+all features through the proxy: GET /api/todos, POST, PUT, DELETE and
+/api/statistics work.
+
+only nginx is exposed to the host:
+
+NAME                 IMAGE          PORTS
+todo-app-app-1       todo-front     80/tcp
+todo-app-backend-1   todo-backend
+todo-app-mongo-1     mongo          27017/tcp
+todo-app-redis-1     redis          6379/tcp
+todo-app-nginx-1     nginx:1.29     0.0.0.0:8080->80/tcp
+
+images:
+todo-front:latest      92.9MB   (multi-stage: only nginx + static files)
+todo-backend:latest    1.69GB
+
+the dev stack was stopped first so that port 8080 is free. The app is
+available in http://localhost:8080 as required.
