@@ -1,0 +1,89 @@
+Exercise 15 - Frontend development environment (todo-frontend)
+==============================================================
+
+Goal: develop todo-frontend with the editor on the host while the app runs in
+a container - no local Node needed, same environment for everyone.
+
+1. dev.Dockerfile
+
+FROM node:24
+
+WORKDIR /usr/src/app
+
+COPY . .
+
+RUN npm install
+
+CMD ["npm", "run", "dev", "--", "--host"]
+
+npm install (not npm ci) since this is a development environment, and
+-- --host is needed so the dev server is reachable outside the container.
+
+2. docker-compose.dev.yml
+
+services:
+  app:
+    image: todo-frontend-dev
+    build:
+      context: .
+      dockerfile: dev.Dockerfile
+    volumes:
+      - ./:/usr/src/app
+      - /usr/src/app/node_modules
+    ports:
+      - 5173:5173
+    container_name: todo-frontend-dev
+    environment:
+      - VITE_BACKEND_URL=http://localhost:3000
+      - CHOKIDAR_USEPOLLING=true
+
+3. two problems encountered and the fixes
+
+a) with just ./:/usr/src/app, the container failed on startup:
+
+todo-frontend-dev | Error: Cannot find module '../rolldown-binding.linux-x64-gnu.node'
+
+The bind mount shadows the node_modules installed inside the image with the
+host's node_modules, which on Windows only has the win32 native bindings
+(@rolldown/binding-win32-x64-msvc). Same problem as the Mac M-series case in
+the material. Instead of running npm install inside the container (which
+would pollute the host node_modules with Linux binaries), an anonymous
+volume keeps the container's own Linux node_modules in place:
+
+      - /usr/src/app/node_modules
+
+b) no hot reload: editing files on the host did not trigger updates. The dev
+server kept serving the cached transform ("Todos" instead of the edited text)
+because the file watcher does not receive inotify events through the Windows
+bind mount. Fix: polling, enabled only inside the container via
+CHOKIDAR_USEPOLLING=true plus
+
+  server: {
+    watch: {
+      usePolling: process.env.CHOKIDAR_USEPOLLING === 'true',
+    },
+  },
+
+in vite.config.js, so local (host) development is unaffected.
+
+4. verifying
+
+$ docker compose -f docker-compose.dev.yml up -d
+todo-frontend-dev | VITE v8.0.0-beta.16 ready in 618 ms
+todo-frontend-dev | ➜ Local: http://localhost:5173/
+
+$ curl -s http://localhost:5173/src/util/apiClient.js | head -1
+import.meta.env = {..., "VITE_BACKEND_URL": "http://localhost:3000"};
+
+edit src/Todos/TodoView.jsx on the host while the container runs:
+
+todo-frontend-dev | 2:35:05 PM [vite] (client) hmr update /src/Todos/TodoView.jsx
+
+-> the change is hot-loaded to the browser, then reverted.
+
+new dependencies are added inside the running container, e.g.
+$ docker exec -it todo-frontend-dev npm install axios
+(or add to package.json and rebuild the image).
+
+teardown:
+$ docker compose -f docker-compose.dev.yml down
