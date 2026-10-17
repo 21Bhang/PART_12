@@ -1,0 +1,22 @@
+services:
+  frontend:
+    image: todo-frontend-dev
+    volumes:
+      - ./todo-frontend:/usr/src/app
+      - /usr/src/app/node_modules
+    ports:
+      - 5173:5173
+    container_name: todo-frontend-dev
+    environment:
+      - VITE_BACKEND_URL=http://localhost:3000
+      - CHOKIDAR_USEPOLLING=true
+
+  nginx:
+    image: nginx:1.29
+    volumes:
+      - ./nginx.dev.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - 8080:80
+    container_name: reverse-proxy
+    depends_on:
+      - frontend

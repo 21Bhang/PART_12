@@ -1,0 +1,99 @@
+Exercise 17 - Nginx reverse proxy in front of todo-frontend
+============================================================
+
+New files at the todo-app level:
+
+todo-app
+├── todo-frontend
+├── todo-backend
+├── nginx.dev.conf
+└── docker-compose.dev.yml
+
+1. todo-app/docker-compose.dev.yml
+
+services:
+  frontend:
+    image: todo-frontend-dev
+    volumes:
+      - ./todo-frontend:/usr/src/app
+      - /usr/src/app/node_modules
+    ports:
+      - 5173:5173
+    container_name: todo-frontend-dev
+    environment:
+      - VITE_BACKEND_URL=http://localhost:3000
+      - CHOKIDAR_USEPOLLING=true
+
+  nginx:
+    image: nginx:1.29
+    volumes:
+      - ./nginx.dev.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - 8080:80
+    container_name: reverse-proxy
+    depends_on:
+      - frontend
+
+No build section per the exercise note: the image is built in the frontend
+repository (docker build -f dev.Dockerfile -t todo-frontend-dev .).
+
+2. todo-app/nginx.dev.conf
+
+events { }
+
+http {
+  server {
+    listen 80;
+
+    location / {
+      proxy_http_version 1.1;
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection 'upgrade';
+
+      proxy_pass http://frontend:5173;
+    }
+  }
+}
+
+proxy_pass must NOT be localhost:5173: inside the nginx container localhost is
+the container itself. Compose DNS resolves the service name frontend to the
+frontend container, and the internal port 5173 does not need to be published
+for this. depends_on makes sure the frontend is started first so the DNS name
+can be resolved when nginx loads its config.
+
+3. the trick: Vite host check
+
+first attempt through the proxy returned 403:
+
+$ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/
+403
+
+nginx proxies with Host: frontend:5173 and the Vite dev server only accepts
+localhost by default. vite.config.js therefore got (as described in the
+"On accessing the Vite Dev Server" section):
+
+  server: {
+    allowedHosts: ['frontend', 'localhost'],
+    ...
+  }
+
+Vite watches its own config file and restarted automatically:
+
+todo-frontend-dev | [vite] vite.config.js changed, restarting server...
+$ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/
+200
+
+4. verifying
+
+direct access still works:  http://localhost:5173 -> 200
+through the proxy:          http://localhost:8080 -> 200, serves the app
+through the proxy, env:     /src/util/apiClient.js contains
+                            VITE_BACKEND_URL = "http://localhost:3000"
+
+hot reload through nginx works (the Upgrade/Connection headers above)
+
+todo-frontend-dev | [vite] (client) hmr update /src/Todos/TodoView.jsx
+
+the backend still runs in the todo-backend dev compose on localhost:3000, so
+backend requests from the browser keep working. The production todo-frontend
+container from exercise 13 was stopped since the proxy now uses port 8080.

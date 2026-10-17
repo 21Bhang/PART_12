@@ -5,6 +5,7 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   server: {
+    allowedHosts: ['frontend', 'localhost'],
     watch: {
       usePolling: process.env.CHOKIDAR_USEPOLLING === 'true',
     },
