@@ -1,0 +1,77 @@
+Exercise 18 - Nginx in front of todo-backend
+=============================================
+
+1. todo-app/docker-compose.dev.yml gained the backend and its dependencies
+
+  backend:
+    image: todo-backend-dev
+    volumes:
+      - ./todo-backend:/usr/src/app
+      - /usr/src/app/node_modules
+    ports:
+      - 3000:3000
+    container_name: todo-backend-dev
+    environment:
+      - MONGO_URL=mongodb://the_username:the_password@mongo:27017/the_database
+      - REDIS_URL=redis://redis:6379
+
+  mongo:
+    image: mongo
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: example
+      MONGO_INITDB_DATABASE: the_database
+    volumes:
+      - ./todo-backend/mongo/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js
+      - mongo_data:/data/db
+
+  redis:
+    image: redis
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - ./todo-backend/redis_data:/data
+
+and nginx depends_on both frontend and backend. The backend connects to the
+databases with the compose service names as before.
+
+the todo-backend dev stack from exercise 16 was stopped first, since it used
+the same ports (3000, 3456, 6379) and container names.
+
+2. new location in nginx.dev.conf
+
+    location /api/ {
+      proxy_http_version 1.1;
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection 'upgrade';
+
+      proxy_pass http://backend:3000/;
+    }
+
+the trailing slash is essential: requests to /api/todos are proxied to
+/todos, because the path part of proxy_pass (just /) replaces the matched
+location prefix (/api/). Without it the backend would receive /api/todos and
+answer 404.
+
+3. verifying
+
+nginx had started before the backend existed, so it was recreated to load
+the new config and resolve the backend DNS name:
+
+$ docker compose -f docker-compose.dev.yml up -d --force-recreate nginx
+
+$ curl -s http://localhost:8080/api/todos
+[{"_id":"...","text":"Write code","done":true},{"_id":"...","text":"Learn about containers","done":false}]
+
+$ curl -s http://localhost:8080/api/statistics
+{"added_todos":2}
+
+backend log confirms the prefix was stripped:
+
+GET /todos 200 60.045 ms - 148
+
+browser-side CRUD through the proxy: POST /api/todos and DELETE
+/api/todos/:id both work with status 200.
+
+http://localhost:8080/api/todos is accessible with a browser as required.
+The backend is also still published on localhost:3000 so the frontend dev
+server keeps working with its current VITE_BACKEND_URL.
