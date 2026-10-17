@@ -1,0 +1,76 @@
+Exercise 16 - Backend development environment (todo-backend)
+============================================================
+
+Goal: develop todo-backend with the editor on the host while it runs in a
+container, with MongoDB and Redis reached over the Docker network.
+
+1. dev.Dockerfile
+
+FROM node:24
+
+WORKDIR /usr/src/app
+
+COPY . .
+
+RUN npm install
+
+CMD ["npm", "run", "dev", "--", "--legacy-watch"]
+
+npm install (not npm ci) for development mode. --legacy-watch makes nodemon
+watch with polling: same reason as the frontend in exercise 15, file change
+events do not reach the container through the Windows bind mount.
+
+2. docker-compose.dev.yml, new server service
+
+  server:
+    image: todo-backend-dev
+    build:
+      context: .
+      dockerfile: dev.Dockerfile
+    volumes:
+      - ./:/usr/src/app
+      - /usr/src/app/node_modules
+    ports:
+      - 3000:3000
+    container_name: todo-backend-dev
+    environment:
+      - MONGO_URL=mongodb://the_username:the_password@mongo:27017/the_database
+      - REDIS_URL=redis://redis:6379
+
+The URLs changed compared to running the backend on the host: inside the
+compose network the database services are reached with their service names
+as DNS names (mongo, redis) and their internal ports (27017, 6379), instead
+of localhost:3456 / localhost:6379 which are only the host-published ports.
+Compose environment variables take precedence over the bind-mounted .env,
+so the values from node --env-file-if-exists=.env are overridden.
+
+3. verifying
+
+$ docker compose -f docker-compose.dev.yml up -d --build
+todo-backend-dev | [nodemon] starting `node --env-file-if-exists=.env ./bin/www`
+todo-backend-dev | Connected to Redis
+
+$ curl -s http://localhost:3000/
+{"MONGO_URL":"mongodb://the_username:the_password@mongo:27017/the_database",
+ "REDIS_URL":"redis://redis:6379","visits":1}
+
+$ curl -s http://localhost:3000/todos          # Mongo through the network
+[{"_id":"...","text":"Write code","done":true},{"_id":"...","text":"Learn about containers","done":false}]
+
+$ curl -s http://localhost:3000/statistics     # Redis through the network
+{"added_todos":2}
+
+nodemon hot reload, adding a temporary route in routes/index.js on the host:
+
+todo-backend-dev | [nodemon] restarting due to changes...
+todo-backend-dev | [nodemon] starting `node --env-file-if-exists=.env ./bin/www`
+$ curl -s http://localhost:3000/dev-check
+{"nodemon":"restarted with the new route"}
+
+-> change visible without rebuilding or restarting manually, then reverted.
+
+the frontend dev server (exercise 15, port 5173) can use this backend as
+before, since it is published on http://localhost:3000.
+
+teardown:
+$ docker compose -f docker-compose.dev.yml down
