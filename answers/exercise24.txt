@@ -1,0 +1,13 @@
+Exercise 24 - Your GitHub repository
+====================================
+
+My exercise repository:
+
+  https://github.com/JunubBTC/PART_12
+
+The repository is public, so no collaborator is needed.
+
+The README.md of the repository contains a link to my own full stack app
+repository (https://github.com/JunubBTC/PART_9, public), which is used for
+the containerized dev and prod environments in exercises 22 and 23
+(the my-app directory).
