@@ -7,6 +7,7 @@ export interface DiaryEntry {
   date: string
   weather: Weather
   visibility: Visibility
+  comment?: string
 }
 
 export interface NewDiaryEntry {
