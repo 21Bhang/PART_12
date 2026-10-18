@@ -1,0 +1,158 @@
+Exercise 23 - My containerized prod env
+=======================================
+
+The production setup of my own full stack app flightdiaries. The app
+repository is linked in the README.md of this exercise repository:
+https://github.com/JunubBTC/PART_9 (public).
+
+1. structure
+
+my-app
+├── frontend
+|   ├── dev.Dockerfile
+|   └── Dockerfile
+├── backend
+|   ├── dev.Dockerfile
+|   └── Dockerfile
+├── nginx.dev.conf
+├── nginx.conf
+├── docker-compose.dev.yml
+└── docker-compose.yml
+
+2. my-app/frontend/Dockerfile
+
+FROM node:24 AS build-stage
+
+WORKDIR /usr/src/app
+
+COPY package*.json ./
+
+RUN npm ci
+
+COPY . .
+
+RUN npm run build
+
+FROM nginx:1.29-alpine
+
+COPY --from=build-stage /usr/src/app/dist /usr/share/nginx/html
+
+Multi-stage build: the React/Vite app is built into static files and only
+the dist directory is copied into a small nginx image. No dev server, no
+source code and no node_modules in the final image.
+
+3. my-app/backend/Dockerfile
+
+FROM node:24
+
+WORKDIR /usr/src/app
+
+COPY package*.json ./
+
+RUN npm ci --omit=dev --legacy-peer-deps
+
+COPY . .
+
+CMD ["node", "--experimental-transform-types", "src/index.ts"]
+
+Only production dependencies are installed. Node runs the TypeScript
+backend directly with type stripping (--experimental-transform-types), the
+same way the app runs its start script. --legacy-peer-deps is required
+because the app's lockfile pins typescript 6 while typescript-eslint
+declares typescript <6 as a peer.
+
+4. my-app/nginx.conf
+
+events { }
+
+http {
+  server {
+    listen 80;
+
+    location /api/ {
+      proxy_pass http://backend:3000;
+    }
+
+    location / {
+      proxy_pass http://frontend:80;
+    }
+  }
+}
+
+The frontend calls the API with the relative url /api/diaries, so all
+traffic goes through this nginx: /api/ is proxied to the backend
+(preserving the path, the backend serves its routes under /api/) and
+everything else to the frontend container, which serves the built static
+files on port 80.
+
+5. my-app/docker-compose.yml
+
+services:
+  frontend:
+    image: flightdiaries-frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+
+  backend:
+    image: flightdiaries-backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+
+  nginx:
+    image: nginx:1.29
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - 8080:80
+    depends_on:
+      - frontend
+      - backend
+
+The images are named flightdiaries-frontend and flightdiaries-backend.
+No source code volumes, no dev servers, only nginx publishes a port (8080).
+The app has no database, so no other services are needed.
+
+6. building and verifying
+
+$ docker compose -f my-app/docker-compose.yml up -d --build
+$ docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Ports}}"
+NAMES               IMAGE                    PORTS
+my-app-nginx-1      nginx:1.29               0.0.0.0:8080->80/tcp, [::]:8080->80/tcp
+my-app-backend-1    flightdiaries-backend
+my-app-frontend-1   flightdiaries-frontend   80/tcp
+
+production frontend, no dev server:
+
+$ curl -s http://localhost:8080/ | head -8
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#1565dd" />
+    <meta name="description" content="Ilari's flight diaries - a clear record of the sky, one landing at a time." />
+    <title>Ilari's flight diaries</title>
+    <script type="module" crossorigin src="/assets/index-C1CvwpKH.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-BDOTWe3q.css">
+
+$ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/@vite/client
+404
+
+the API works through the proxy:
+
+$ curl -s http://localhost:8080/api/diaries | head -c 120
+[{"id":1,"date":"2017-01-01","weather":"rainy","visibility":"poor"},{"id":2,"date":"2017-04-01","weather":"sunny","visib
+
+$ curl -s -X POST http://localhost:8080/api/diaries -H "Content-Type: application/json" -d '{"date":"2026-10-18","weather":"stormy","visibility":"great","comment":"production build works"}'
+{"id":5,"date":"2026-10-18","weather":"stormy","visibility":"great","comment":"production build works"}
+
+The production app was also opened in a browser (Playwright screenshots):
+the redesigned UI is served from the static bundle and saving a new flight
+works end to end in production.
+
+the dev environment keeps working the same way as in exercise 22:
+
+$ docker compose -f my-app/docker-compose.dev.yml up -d
