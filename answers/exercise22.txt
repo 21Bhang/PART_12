@@ -1,0 +1,175 @@
+Exercise 22 - My containerized dev env
+======================================
+
+The app: flightdiaries (Flight Diaries), my own full stack app that I built
+during part 9 of the course. The full stack app repository is
+
+  https://github.com/JunubBTC/PART_9   (public, see the flightdiaries directory)
+
+and it is linked in the README.md of this exercise repository as required.
+
+1. structure
+
+my-app
+├── frontend
+|   ├── dev.Dockerfile
+|   └── ... the source of flightdiaries/frontend copied from the app repo
+├── backend
+|   ├── dev.Dockerfile
+|   └── ... the source of flightdiaries/backend copied from the app repo
+├── nginx.dev.conf
+└── docker-compose.dev.yml
+
+The app source was copied from https://github.com/JunubBTC/PART_9/tree/main/flightdiaries
+so that the environment is self-contained in this repository. The working
+copy is the same app; the dev container files were added on top.
+
+2. my-app/frontend/dev.Dockerfile
+
+FROM node:24
+
+WORKDIR /usr/src/app
+
+COPY . .
+
+RUN npm install
+
+CMD ["npm", "run", "dev", "--", "--host"]
+
+Vite dev server started with --host so that it is reachable from outside
+the container.
+
+3. my-app/backend/dev.Dockerfile
+
+FROM node:24
+
+WORKDIR /usr/src/app
+
+COPY . .
+
+RUN npm install --legacy-peer-deps
+
+RUN npm install -g nodemon
+
+CMD ["nodemon", "--legacy-watch", "--ext", "ts,js,mjs,cjs,json", "--exec", "node --experimental-transform-types src/index.ts"]
+
+The app's own dev script uses node --watch, which relies on filesystem
+events that do not propagate over Windows bind mounts, and nodemon does not
+watch .ts files with its default extensions. So the dev container runs the
+backend under nodemon with --legacy-watch (polling) and --ext ts, the same
+kind of fix used for the todo-app backend in exercise 17. --legacy-peer-deps
+is needed because the app's lockfile pins typescript 6 while
+typescript-eslint@8 declares typescript <6 as a peer.
+
+4. my-app/nginx.dev.conf
+
+events { }
+
+http {
+  server {
+    listen 80;
+
+    location / {
+      proxy_http_version 1.1;
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection 'upgrade';
+
+      proxy_pass http://frontend:5173;
+    }
+
+    location /api/ {
+      proxy_http_version 1.1;
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection 'upgrade';
+
+      proxy_pass http://backend:3000;
+    }
+  }
+}
+
+The frontend calls the backend with the relative url /api/diaries, so the
+browser only ever talks to nginx, which routes /api/ to the backend and
+everything else to the Vite dev server. Unlike the todo-app, the backend
+already serves its routes under /api/ (app.use('/api/diaries', ...)), so no
+path is stripped in the proxy_pass. The frontend/vite.config.ts was given
+allowedHosts: ['frontend', 'localhost'] because nginx forwards requests to
+the dev server with the Host header set to frontend:5173.
+
+5. my-app/docker-compose.dev.yml
+
+services:
+  frontend:
+    image: flightdiaries-frontend-dev
+    build:
+      context: ./frontend
+      dockerfile: dev.Dockerfile
+    volumes:
+      - ./frontend:/usr/src/app
+      - /usr/src/app/node_modules
+    container_name: flightdiaries-frontend-dev
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+
+  backend:
+    image: flightdiaries-backend-dev
+    build:
+      context: ./backend
+      dockerfile: dev.Dockerfile
+    volumes:
+      - ./backend:/usr/src/app
+      - /usr/src/app/node_modules
+    container_name: flightdiaries-backend-dev
+
+  nginx:
+    image: nginx:1.29
+    volumes:
+      - ./nginx.dev.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - 8080:80
+    container_name: flightdiaries-nginx-dev
+    depends_on:
+      - frontend
+      - backend
+
+Source code is bind mounted for live editing, the anonymous
+/usr/src/app/node_modules volume protects the container's dependencies from
+being shadowed by the bind mount (as in the todo-app dev environment), and
+CHOKIDAR_USEPOLLING makes the Vite file watcher work on Windows. Only nginx
+publishes a port (8080).
+
+6. building and verifying
+
+$ docker compose -f my-app/docker-compose.dev.yml up -d --build
+ Container flightdiaries-backend-dev Started
+ Container flightdiaries-frontend-dev Started
+ Container flightdiaries-nginx-dev Started
+
+$ docker ps --format "table {{.Names}}\t{{.Ports}}"
+NAMES                        PORTS
+flightdiaries-nginx-dev      0.0.0.0:8080->80/tcp, [::]:8080->80/tcp
+flightdiaries-frontend-dev
+flightdiaries-backend-dev
+
+the app is served through nginx:
+
+$ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/
+200
+
+$ curl -s http://localhost:8080/api/diaries | head -c 120
+[{"id":1,"date":"2017-01-01","weather":"rainy","visibility":"poor"},{"id":2,"date":"2017-04-01","weather":"sunny","visib
+
+$ curl -s -X POST http://localhost:8080/api/diaries -H "Content-Type: application/json" -d '{"date":"2026-10-18","weather":"cloudy","visibility":"ok","comment":"clean restart works"}'
+{"id":5,"date":"2026-10-18","weather":"cloudy","visibility":"ok","comment":"clean restart works"}
+
+hot reload was tested by editing files on the host while the containers run:
+
+frontend (Vite):
+  11:45:31 AM [vite] (client) page reload src/main.tsx
+
+backend (nodemon --legacy-watch):
+  [nodemon] restarting due to changes...
+  [nodemon] starting `node --experimental-transform-types src/index.ts`
+  Server running on port 3000
+
+also after a full docker compose down and up the whole environment comes up
+and serves the app on http://localhost:8080.
