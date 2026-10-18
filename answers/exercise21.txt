@@ -1,0 +1,79 @@
+Exercise 21 - E2E tests in CI
+=============================
+
+1. the tests
+
+todo-tests/ contains Playwright E2E tests (tests/todo-app.spec.js):
+
+  Todo App E2E Tests
+    - frontend loads and displays the todo application
+    - can add a new todo via UI
+    - can toggle todo completion status
+  Backend API Tests
+    - GET /api/todos returns todos list
+    - POST /api/todos creates a new todo
+    - GET /api/statistics returns added_todos count from Redis
+    - PUT /api/todos/:id updates a todo
+
+playwright.config.js points baseURL to http://localhost:8080, i.e. the
+production environment served by nginx, and only enables chromium.
+
+2. running the tests locally
+
+The production stack from exercise 20 was started with
+
+  $ docker compose -f todo-app/docker-compose.yml up -d
+
+The tests were run against it:
+
+  $ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080
+  200
+  $ cd todo-tests && npx playwright test
+  Running 7 tests using 4 workers
+    ✓  3 [chromium] › todo-app.spec.js:60:7 › GET /api/todos returns todos list (529ms)
+    ✓  5 [chromium] › todo-app.spec.js:69:7 › POST /api/todos creates a new todo (235ms)
+    ✓  6 [chromium] › todo-app.spec.js:86:7 › GET /api/statistics returns added_todos count from Redis (199ms)
+    ✓  7 [chromium] › todo-app.spec.js:103:7 › PUT /api/todos/:id updates a todo (452ms)
+    ✓  1 [chromium] › todo-app.spec.js:9:7 › frontend loads and displays the todo application (1.7s)
+    ✓  2 [chromium] › todo-app.spec.js:18:7 › can add a new todo via UI (2.4s)
+    ✓  4 [chromium] › todo-app.spec.js:35:7 › can toggle todo completion status (3.1s)
+    7 passed (7.9s)
+
+Playwright is pinned to version 1.59.0 in todo-tests/package.json and the
+package-lock.json is committed, so npm ci in CI installs exactly the same
+version and the same browser build (chromium revision 1217).
+
+3. the workflow
+
+.github/workflows/e2e-tests.yml triggers on pushes to the main and master
+branches:
+
+  on:
+    push:
+      branches: [ main, master ]
+
+The job runs on ubuntu-latest and:
+
+- builds the production images
+  (docker build -t todo-backend ./todo-app/todo-backend,
+   docker build -t todo-front ./todo-app/todo-frontend)
+- starts the production stack from todo-app/docker-compose.yml
+- waits until nginx answers on http://localhost:8080
+- runs npm ci and npx playwright install --with-deps chromium in todo-tests
+- runs the tests with npm run test:e2e / npx playwright test
+- on failure uploads the Playwright report and test-results as artifacts
+  and prints the container logs
+- always tears the stack down with docker compose down -v
+
+4. verification in GitHub Actions
+
+Pushing commit db13792 ("Exercise 21: run Playwright E2E tests in CI on
+pushes to main/master") triggered the E2E Tests workflow in GitHub Actions:
+
+  https://github.com/JunubBTC/PART_12/actions/runs/39122962341
+
+The run completed with conclusion: success. The job built the todo-backend
+and todo-front images, started the production stack with docker compose,
+waited for nginx on http://localhost:8080, ran npm ci and
+npx playwright install --with-deps chromium, and all 7 Playwright tests
+passed in CI.
